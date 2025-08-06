@@ -274,9 +274,14 @@ func (dms *DiskMetricStore) processWriteRequest(wr WriteRequest) {
 	key := groupingKeyFor(wr.Labels)
 
 	if wr.MetricFamilies == nil {
-		// No MetricFamilies means delete request. Delete the whole
-		// metric group, and we are done here.
-		delete(dms.metricGroups, key)
+		// No MetricFamilies means delete request.
+		if key == "" {
+			// Delete all metric groups
+			clear(dms.metricGroups)
+		} else {
+			// Delete the specific metric group
+			delete(dms.metricGroups, key)
+		}
 		return
 	}
 	// Otherwise, it's an update.

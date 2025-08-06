@@ -1562,6 +1562,54 @@ func TestGroupingKeyForLabels(t *testing.T) {
 	}
 }
 
+// TestCleanUpMetricGroups tests clean up metric group.
+func TestCleanUpMetricGroups(t *testing.T) {
+	dms := NewDiskMetricStore("", 100*time.Millisecond, prometheus.DefaultGatherer, logger)
+
+	ts1 := time.Now()
+	errCh := make(chan error, 1)
+	dms.SubmitWriteRequest(WriteRequest{
+		Labels: map[string]string{
+			"job": "job1",
+		},
+		Timestamp: ts1,
+		MetricFamilies: map[string]*dto.MetricFamily{
+			"go_goroutines": mfgg,
+			"mf_help":       mfh1,
+		},
+	})
+	dms.SubmitWriteRequest(WriteRequest{
+		Labels: map[string]string{
+			"job": "job2",
+		},
+		Timestamp: ts1,
+		MetricFamilies: map[string]*dto.MetricFamily{
+			"mf_help": mfh2,
+		},
+		Done: errCh,
+	})
+	for err := range errCh {
+		t.Fatal("Unexpected error:", err)
+	}
+
+	errCh = make(chan error, 1)
+	// labels empty means delete all metric groups
+	dms.SubmitWriteRequest(WriteRequest{
+		Labels:    map[string]string{},
+		Timestamp: time.Now(),
+		Done:      errCh,
+	})
+	for err := range errCh {
+		t.Fatal("Unexpected error:", err)
+	}
+
+	// Either we have settled on the mfh1 help string or the mfh2 help string.
+	gotMFs := dms.GetMetricFamilies()
+	if len(gotMFs) != 0 {
+		t.Fatalf("expected 0 metric families, got %d", len(gotMFs))
+	}
+}
+
 func checkMetricFamilies(dms *DiskMetricStore, expectedMFs ...*dto.MetricFamily) error {
 	gotMFs := dms.GetMetricFamilies()
 	if expected, got := len(expectedMFs), len(gotMFs); expected != got {

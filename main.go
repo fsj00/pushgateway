@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/golang/snappy"
@@ -68,6 +69,7 @@ func main() {
 		persistenceInterval = app.Flag("persistence.interval", "The minimum interval at which to write out the persistence file.").Default("5m").Duration()
 		pushUnchecked       = app.Flag("push.disable-consistency-check", "Do not check consistency of pushed metrics. DANGEROUS.").Default("false").Bool()
 		pushUTF8Names       = app.Flag("push.enable-utf8-names", "Allow UTF-8 characters in metric and label names.").Default("false").Bool()
+		pullEnableCleanup   = app.Flag("pull.enable-cleanup-after-pull", "Enable cleanup of metrics after request /metrics.").Default("false").Bool()
 		promlogConfig       = promslog.Config{Style: promslog.GoKitStyle}
 	)
 	promslogflag.AddFlags(app, &promlogConfig)
@@ -113,12 +115,22 @@ func main() {
 	r := route.New()
 	r.Get(*routePrefix+"/-/healthy", handler.Healthy(ms).ServeHTTP)
 	r.Get(*routePrefix+"/-/ready", handler.Ready(ms).ServeHTTP)
-	r.Get(
-		path.Join(*routePrefix, *metricsPath),
+
+	wrappedMetricsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Call the original metrics handler
 		promhttp.HandlerFor(g, promhttp.HandlerOpts{
 			ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
-		}).ServeHTTP,
-	)
+		}).ServeHTTP(w, r)
+
+		// If pullEnableCleanup is enabled, clear metrics after successful pull
+		if *pullEnableCleanup {
+			ms.SubmitWriteRequest(storage.WriteRequest{
+				Labels:    map[string]string{},
+				Timestamp: time.Now(),
+			})
+		}
+	})
+	r.Get(path.Join(*routePrefix, *metricsPath), wrappedMetricsHandler.ServeHTTP)
 
 	// Handlers for pushing and deleting metrics.
 	pushAPIPath := *routePrefix + "/metrics"
